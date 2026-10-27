@@ -1,17 +1,19 @@
-import os
-from dotenv import load_dotenv
-from openai import OpenAI
+from sklearn.feature_extraction.text import HashingVectorizer
 
-load_dotenv()
 
-_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
-_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_vectorizer = HashingVectorizer(
+    n_features=384,
+    alternate_sign=False,
+    norm="l2",
+    lowercase=True,
+    stop_words="english",
+    ngram_range=(1, 2),
+)
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+
+def embed_texts(texts):
     """
-    Returns embeddings for a list of texts.
+    Convert text into fixed-size vectors.
     """
-    if not texts:
-        return []
-    resp = _client.embeddings.create(model=_EMBED_MODEL, input=texts)
-    return [item.embedding for item in resp.data]
+    vectors = _vectorizer.transform(texts)
+    return vectors.toarray().tolist()

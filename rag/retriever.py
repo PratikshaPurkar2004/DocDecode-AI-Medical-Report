@@ -1,15 +1,15 @@
 import os
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-from pinecone import Pinecone
+import chromadb
 
 from rag.embeddings import embed_texts
 from rag.ranking import rank_and_filter
 
 load_dotenv()
 
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "heydocai-medkb")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+CHROMA_DB_DIR = os.getenv("CHROMA_DB_DIR", "chroma_db")
+COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "heydocai-medkb")
 
 
 def retrieve_top_k(
@@ -21,25 +21,34 @@ def retrieve_top_k(
     if not query.strip():
         return []
 
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-    index = pc.Index(INDEX_NAME)
+    client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
+    collection = client.get_or_create_collection(
+        name=COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},
+    )
 
     query_embedding = embed_texts([query])[0]
 
-    res = index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=True,
-        include_values=False,
+    res = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"],
     )
 
+    docs = res.get("documents", [[]])[0] if res.get("documents") else []
+    metas = res.get("metadatas", [[]])[0] if res.get("metadatas") else []
+    dists = res.get("distances", [[]])[0] if res.get("distances") else []
+
     raw_results = []
-    for match in res.get("matches", []):
-        meta = match.get("metadata", {}) or {}
+    for doc, meta, dist in zip(docs, metas, dists):
+        # Chroma returns cosine DISTANCE (lower = more similar).
+        # Convert to a similarity score in the same "higher = better" direction
+        # that ranking.py / guards.py expect (mirrors old Pinecone score usage).
+        score = 1.0 - float(dist)
         raw_results.append({
-            "text": meta.get("text", ""),
-            "score": float(match.get("score", 0.0)),
-            "metadata": meta,
+            "text": doc,
+            "score": score,
+            "metadata": meta or {},
         })
 
     return rank_and_filter(
